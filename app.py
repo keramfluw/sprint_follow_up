@@ -1,26 +1,9 @@
-# Qrauts AG Themensammler
-# Streamlit App
-# Features:
-# - Sprint-Themen anlegen (Titel, Beschreibung, Kategorie, Links), Autor aus Dropdown (Marek, Annika, Kurt, Gerd)
-# - Automatischer Eröffnungstag (Datum/Zeitstempel Europe/Berlin)
-# - Updates & Kommentare mit Datum/Zeitstempel
-# - Kategorien verwalten (hinzufügen/löschen) und Zuordnung pro Thema jederzeit änderbar
-# - Filter (Kategorie, Person, Suche, Zeitraum), Mehrfachauswahl
-# - Export gewählter Einträge (oder aller) als PDF
-# - Hintergrund: animierte Windräder + kleine Pferde am unteren Rand (zufällig)
-# - Natur-/Umwelt-Farbschema
-#
-# Start:  streamlit run app.py
-# Python: 3.10+
-
+# Qrauts AG Themensammler – mit Archiv & Import
 import streamlit as st
-import sqlite3
+import sqlite3, json, re, io, random, requests
 import pandas as pd
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-import json
-import re
-import io
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
@@ -34,7 +17,7 @@ DB_PATH = "themensammler.db"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# ---------- Styling & Background Animations ----------
+# ---------- Styling & Background Animations (Windräder + Pferde) ----------
 def inject_theme_and_animations():
     html = r'''
     <style>
@@ -43,121 +26,51 @@ def inject_theme_and_animations():
         --leaf:#4CAF50;
         --earth:#2E3B2A;
         --sky:#E6F5EA;
-        --sand:#DDEAD7;
         --ink:#0B1B13;
       }
-      .stApp {
-        background: linear-gradient(180deg, var(--sky) 0%, #F7FFF9 60%);
-        color: var(--ink);
-      }
-      /* Cards */
-      .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stExpander, .stButton>button, .stDownloadButton>button {
-        border-radius: 12px !important;
-      }
-      /* Header */
+      .stApp { background: linear-gradient(180deg, var(--sky) 0%, #F7FFF9 60%); color: var(--ink); }
+      .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stExpander, .stButton>button, .stDownloadButton>button { border-radius: 12px !important; }
       header[data-testid="stHeader"] {background: rgba(0,0,0,0);}
-      /* Wind farm */
-      .windfarm {
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: -1;
-      }
-      .wind {
-        position: absolute;
-        bottom: 8rem;
-        width: 140px; height: 180px;
-        opacity: 0.25;
-      }
-      .mast {
-        position:absolute; bottom:0; left:68px; width:4px; height:140px; background: var(--earth); border-radius:2px;
-      }
-      .nacelle {
-        position:absolute; bottom:120px; left:58px; width:24px; height:10px; background: var(--earth); border-radius:4px;
-      }
-      .hub {
-        position:absolute; bottom:126px; left:68px; width:8px; height:8px; background: var(--earth); border-radius:50%;
-        transform-origin:center center;
-      }
-      .blade {
-        position:absolute; bottom:126px; left:72px; width:80px; height:2px; background: var(--leaf);
-        transform-origin: -4px 1px;
-        border-radius:2px;
-      }
-      @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
+
+      .windfarm { position: fixed; inset: 0; pointer-events: none; z-index: -1; }
+      .wind { position: absolute; bottom: 8rem; width: 140px; height: 180px; opacity: 0.25; }
+      .mast { position:absolute; bottom:0; left:68px; width:4px; height:140px; background: var(--earth); border-radius:2px; }
+      .nacelle { position:absolute; bottom:120px; left:58px; width:24px; height:10px; background: var(--earth); border-radius:4px; }
+      .hub { position:absolute; bottom:126px; left:68px; width:8px; height:8px; background: var(--earth); border-radius:50%; transform-origin:center center; }
+      .blade { position:absolute; bottom:126px; left:72px; width:80px; height:2px; background: var(--leaf); transform-origin: -4px 1px; border-radius:2px; }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       .rotor { animation: spin var(--spd,10s) linear infinite; transform-origin: 72px 127px; }
-      /* Horses */
-      .field {
-        position: fixed; bottom: 0; left: 0; right: 0; height: 120px;
-        background: linear-gradient(0deg, #CFE8C5 0%, transparent 80%);
-        z-index: 0; pointer-events: none;
-      }
-      .horse {
-        position: fixed;
-        bottom: 12px;
-        font-size: 18px;
-        opacity: 0.9;
-        filter: saturate(0.6);
-        animation-name: gallop;
-        animation-timing-function: linear;
-        animation-iteration-count: 1;
-        pointer-events: none;
-      }
-      @keyframes gallop {
-        from { transform: translateX(-10vw); }
-        to   { transform: translateX(calc(100vw + 10vw)); }
-      }
-      /* Eco accents */
-      div[data-testid="stSidebar"] {
-        background: #F2FBF4;
-        border-right: 1px solid #E0F2E6;
-      }
-      .eco-accent {
-        border-left: 6px solid var(--leaf);
-        padding-left: 12px;
-        background: #F6FFF8;
-        border-radius: 8px;
-      }
-      /* Dataframe tweaks */
+
+      .field { position: fixed; bottom: 0; left: 0; right: 0; height: 120px; background: linear-gradient(0deg, #CFE8C5 0%, transparent 80%); z-index: 0; pointer-events: none; }
+      .eco-horses { position: fixed; bottom: 0; left: 0; right: 0; height: 120px; pointer-events: none; z-index: 9998; overflow: visible; }
+      .horse { position: fixed; bottom: 12px; font-size: 18px; opacity: 0.9; filter: saturate(0.6); animation-name: gallop; animation-timing-function: linear; animation-iteration-count: infinite; z-index: 9999; pointer-events: none; }
+      @keyframes gallop { from { transform: translateX(-10vw);} to { transform: translateX(calc(100vw + 10vw)); } }
+
+      div[data-testid="stSidebar"] { background: #F2FBF4; border-right: 1px solid #E0F2E6; }
+      .eco-accent { border-left: 6px solid var(--leaf); padding-left: 12px; background: #F6FFF8; border-radius: 8px; }
       .stDataFrame { background: white; }
     </style>
     <div class="windfarm">
       <div class="wind" style="left:6vw;"><div class="mast"></div><div class="nacelle"></div><div class="rotor"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
-      <div class="wind" style="left:18vw; transform: scale(0.9);"><div class="mast"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:12s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
+      <div class="wind" style="left:18vw; transform: scale(0.9);"><div class="mast"></"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:12s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
       <div class="wind" style="left:32vw; transform: scale(1.1);"><div class="mast"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:8s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
       <div class="wind" style="left:56vw; transform: scale(0.85);"><div class="mast"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:11s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
       <div class="wind" style="left:74vw; transform: scale(1.05);"><div class="mast"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:9s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
     </div>
-    <div class="field" id="horse-field"></div>
-    <script>
-      const emojis = ["🐎","🐴","🦄"];
-      function spawnHorse(){
-        const h = document.createElement("div");
-        h.className = "horse";
-        h.textContent = emojis[Math.floor(Math.random()*emojis.length)];
-        const y = 6 + Math.random()*50;
-        const dur = 10 + Math.random()*16;
-        const size = 14 + Math.random()*14;
-        h.style.bottom = y + "px";
-        h.style.left = "-10vw";
-        h.style.fontSize = size + "px";
-        h.style.animationDuration = dur + "s";
-        document.body.appendChild(h);
-        setTimeout(()=> h.remove(), (dur+1)*1000);
-      }
-      // spawn bursts
-      setInterval(()=>{
-        if (document.visibilityState === 'visible'){
-          const n = 1 + Math.floor(Math.random()*2);
-          for(let i=0;i<n;i++){ setTimeout(spawnHorse, i*800); }
-        }
-      }, 6000);
-    </script>
+    <div class="field"></div>
     '''
-    st.markdown(html, unsafe_allow_html=True)
+    # Render horses server-side (randomized)
+    emojis = ["🐎","🐴","🦄"]
+    horses_tags = []
+    for i in range(8):
+        delay = random.uniform(0, 12)
+        dur = random.uniform(10, 22)
+        size = random.randint(14, 26)
+        bottom = random.randint(6, 56)
+        emoji = random.choice(emojis)
+        horses_tags.append(f'<span class="horse" style="animation-delay:{delay:.2f}s; animation-duration:{dur:.2f}s; font-size:{size}px; bottom:{bottom}px">{emoji}</span>')
+    horses_html = '<div class="eco-horses">' + ''.join(horses_tags) + '</div>'
+    st.markdown(html + horses_html, unsafe_allow_html=True)
 
 inject_theme_and_animations()
 
@@ -170,9 +83,16 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
+    # Settings
+    cur.execute("""CREATE TABLE IF NOT EXISTS settings(
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );""")
+    # Categories
     cur.execute("""CREATE TABLE IF NOT EXISTS categories(
         name TEXT PRIMARY KEY
     );""")
+    # Topics
     cur.execute("""CREATE TABLE IF NOT EXISTS topics(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -181,8 +101,10 @@ def init_db():
         created_by TEXT,
         created_at TEXT,
         links TEXT DEFAULT '[]',
+        archived_at TEXT,
         FOREIGN KEY(category) REFERENCES categories(name) ON UPDATE CASCADE ON DELETE SET NULL
     );""")
+    # Updates
     cur.execute("""CREATE TABLE IF NOT EXISTS updates(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         topic_id INTEGER,
@@ -191,6 +113,7 @@ def init_db():
         created_at TEXT,
         FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
     );""")
+    # Comments
     cur.execute("""CREATE TABLE IF NOT EXISTS comments(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         topic_id INTEGER,
@@ -199,12 +122,9 @@ def init_db():
         created_at TEXT,
         FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
     );""")
-    # Seed default categories if not present
+    # Seed default categories
     for cat in DEFAULT_CATEGORIES:
-        try:
-            cur.execute("INSERT OR IGNORE INTO categories(name) VALUES(?)", (cat,))
-        except:
-            pass
+        cur.execute("INSERT OR IGNORE INTO categories(name) VALUES(?)", (cat,))
     conn.commit()
     return conn
 
@@ -229,6 +149,14 @@ def add_category(name:str):
 def delete_category(name:str):
     conn.execute("DELETE FROM categories WHERE name = ?", (name,))
     conn.commit()
+
+def set_setting(key:str, value:str):
+    conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    conn.commit()
+
+def get_setting(key:str, default:str=""):
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
 
 def create_topic(title, description, category, created_by, links):
     created_at = now_iso()
@@ -255,8 +183,26 @@ def add_link_to_topic(topic_id:int, url:str, label:str):
     conn.execute("UPDATE topics SET links=? WHERE id=?", (json.dumps(links, ensure_ascii=False), topic_id))
     conn.commit()
 
+def add_update(topic_id:int, user:str, content:str):
+    conn.execute("""INSERT INTO updates(topic_id,user,content,created_at)
+                    VALUES(?,?,?,?)""", (topic_id, user, content, now_iso()))
+    conn.commit()
+
+def add_comment(topic_id:int, user:str, content:str):
+    conn.execute("""INSERT INTO comments(topic_id,user,content,created_at)
+                    VALUES(?,?,?,?)""", (topic_id, user, content, now_iso()))
+    conn.commit()
+
+def archive_topic(topic_id:int, user:str):
+    conn.execute("UPDATE topics SET archived_at=? WHERE id=?", (now_iso(), topic_id))
+    conn.commit()
+
+def restore_topic(topic_id:int):
+    conn.execute("UPDATE topics SET archived_at=NULL WHERE id=?", (topic_id,))
+    conn.commit()
+
 def list_topics(filters:dict):
-    q = "SELECT id, title, description, category, created_by, created_at, links FROM topics WHERE 1=1"
+    q = "SELECT id, title, description, category, created_by, created_at, links, archived_at FROM topics WHERE 1=1"
     params = []
     if filters.get("categories"):
         q += " AND category IN ({})".format(",".join(["?"]*len(filters["categories"])))
@@ -274,34 +220,19 @@ def list_topics(filters:dict):
     if filters.get("date_to"):
         q += " AND date(created_at) <= date(?)"
         params.append(filters["date_to"].isoformat())
+    # Archived handling
+    if filters.get("archived_only"):
+        q += " AND archived_at IS NOT NULL"
+    else:
+        q += " AND archived_at IS NULL"
     q += " ORDER BY datetime(created_at) DESC"
     rows = conn.execute(q, params).fetchall()
-    cols = ["id","Titel","Beschreibung","Kategorie","Autor","Erstellt am","Links"]
+    cols = ["id","Titel","Beschreibung","Kategorie","Autor","Erstellt am","Links","archived_at"]
     df = pd.DataFrame(rows, columns=cols)
     return df
 
-def add_update(topic_id:int, user:str, content:str):
-    conn.execute("""INSERT INTO updates(topic_id,user,content,created_at)
-                    VALUES(?,?,?,?)""", (topic_id, user, content, now_iso()))
-    conn.commit()
-
-def add_comment(topic_id:int, user:str, content:str):
-    conn.execute("""INSERT INTO comments(topic_id,user,content,created_at)
-                    VALUES(?,?,?,?)""", (topic_id, user, content, now_iso()))
-    conn.commit()
-
-def get_updates(topic_id:int):
-    rows = conn.execute("SELECT user, content, created_at FROM updates WHERE topic_id=? ORDER BY datetime(created_at) DESC", (topic_id,)).fetchall()
-    return rows
-
-def get_comments(topic_id:int):
-    rows = conn.execute("SELECT user, content, created_at FROM comments WHERE topic_id=? ORDER BY datetime(created_at) DESC", (topic_id,)).fetchall()
-    return rows
-
 def build_pdf(selected_ids:list[int]) -> bytes:
-    # Gather data
     if not selected_ids:
-        # export all
         ids = [r[0] for r in conn.execute("SELECT id FROM topics ORDER BY datetime(created_at) DESC").fetchall()]
     else:
         ids = selected_ids
@@ -324,7 +255,6 @@ def build_pdf(selected_ids:list[int]) -> bytes:
             c.drawString(margin, y, line)
             y -= leading
 
-    # Title
     c.setFont("Helvetica-Bold", 16)
     c.drawString(margin, y, f"{APP_TITLE} – Export")
     y -= 18
@@ -345,7 +275,6 @@ def build_pdf(selected_ids:list[int]) -> bytes:
         if desc:
             write_line("Beschreibung:", "Helvetica-Bold", 10, 12)
             write_line(desc, "Helvetica", 10, 12)
-        # Links
         try:
             links = json.loads(links_json) if links_json else []
         except:
@@ -354,19 +283,6 @@ def build_pdf(selected_ids:list[int]) -> bytes:
             write_line("Links:", "Helvetica-Bold", 10, 12)
             for l in links:
                 write_line(f"• {l.get('label')}: {l.get('url')}", "Helvetica", 9, 12)
-        # Updates
-        ups = get_updates(tid)
-        if ups:
-            write_line("Updates:", "Helvetica-Bold", 10, 12)
-            for u in ups:
-                write_line(f"• {u[2]} – {u[0]}: {u[1]}", "Helvetica", 9, 12)
-        # Kommentare
-        cms = get_comments(tid)
-        if cms:
-            write_line("Kommentare:", "Helvetica-Bold", 10, 12)
-            for cmn in cms:
-                write_line(f"• {cmn[2]} – {cmn[0]}: {cmn[1]}", "Helvetica", 9, 12)
-        # Separator
         y -= 6
         c.setStrokeColorRGB(0.7,0.82,0.74)
         c.line(margin, y, width - margin, y)
@@ -392,9 +308,8 @@ with st.sidebar.expander("Kategorien verwalten", expanded=False):
         del_cat = st.selectbox("Kategorie löschen", ["– Auswählen –"] + cats)
         if st.button("🗑️ Löschen", use_container_width=True, disabled=(del_cat=="– Auswählen –")):
             delete_category(del_cat)
-            st.warning(f"Kategorie '{del_cat}' gelöscht. Bestehende Themen behalten die Bezeichnung ggf. bis zur Neuzuordnung.")
+            st.warning(f"Kategorie '{del_cat}' gelöscht.")
 
-# Filters
 with st.sidebar.expander("🔎 Filter", expanded=False):
     fcats = st.multiselect("Rubriken", options=get_categories())
     fusers = st.multiselect("Autoren", options=USERS)
@@ -404,12 +319,68 @@ with st.sidebar.expander("🔎 Filter", expanded=False):
         dfrom = st.date_input("Von (inkl.)", value=None)
     with c2:
         dto = st.date_input("Bis (inkl.)", value=None)
-    st.session_state["_filters"] = {"categories": fcats, "users": fusers, "q": q, "date_from": dfrom or None, "date_to": dto or None}
+    show_archived = st.checkbox("Nur archivierte anzeigen")
+    st.session_state["_filters"] = {"categories": fcats, "users": fusers, "q": q, "date_from": dfrom or None, "date_to": dto or None, "archived_only": show_archived}
 
-# Export
+with st.sidebar.expander("📦 Archiv (Excel)", expanded=False):
+    gh_url = st.text_input("GitHub RAW-URL der Archiv-Excel (optional)", value=get_setting("archive_excel_url",""), placeholder="https://raw.githubusercontent.com/<user>/<repo>/<branch>/qrauts_themensammler/archiv.xlsx")
+    if st.button("🔗 URL speichern"):
+        set_setting("archive_excel_url", gh_url)
+        st.success("Archiv-URL gespeichert.")
+    cA, cB = st.columns(2)
+    with cA:
+        if st.button("⬇️ Von GitHub laden (READ)") and gh_url:
+            try:
+                r = requests.get(gh_url, timeout=10)
+                r.raise_for_status()
+                open("archiv.xlsx", "wb").write(r.content)
+                st.success("archiv.xlsx lokal aktualisiert.")
+            except Exception as e:
+                st.error(f"Download fehlgeschlagen: {e}")
+    with cB:
+        if st.button("⬇️ Lokales Archiv erzeugen"):
+            try:
+                df_arch = pd.read_sql_query("SELECT id as ID, title as Titel, description as Beschreibung, category as Rubrik, created_by as Autor, created_at as Eroeffnung, archived_at as Archiviert_am, links as Links FROM topics WHERE archived_at IS NOT NULL ORDER BY datetime(archived_at) DESC", conn)
+                df_arch.to_excel("archiv.xlsx", index=False)
+                st.success("archiv.xlsx erzeugt. Bitte manuell ins Repo committen/pushen.")
+            except Exception as e:
+                st.error(f"Excel-Erzeugung fehlgeschlagen: {e}")
+
+with st.sidebar.expander("📥 Import (Excel)", expanded=False):
+    st.caption("Excel-Import: Spalten 'Titel, Beschreibung, Rubrik, Autor, Eroeffnung, Links(JSON optional)'")
+    up_xlsx = st.file_uploader("Excel importieren", type=["xlsx"])
+    if up_xlsx and st.button("Excel importieren"):
+        try:
+            xdf = pd.read_excel(up_xlsx)
+            req_cols = {"Titel","Beschreibung","Rubrik","Autor","Eroeffnung"}
+            if not req_cols.issubset(set(xdf.columns)):
+                st.error(f"Fehlende Spalten. Erwartet: {', '.join(sorted(req_cols))}")
+            else:
+                imported = 0
+                for _, r in xdf.iterrows():
+                    title = str(r.get("Titel","")).strip()
+                    desc  = str(r.get("Beschreibung","") or "").strip()
+                    cat   = str(r.get("Rubrik","")).strip() or None
+                    author= str(r.get("Autor","")).strip() or USERS[0]
+                    created_at = str(r.get("Eroeffnung","")).strip() or now_iso()
+                    links = []
+                    if "Links" in xdf.columns and pd.notna(r.get("Links")):
+                        try:
+                            links = json.loads(r.get("Links"))
+                        except Exception:
+                            links = []
+                    if title:
+                        tid = create_topic(title, desc, cat, author, links)
+                        conn.execute("UPDATE topics SET created_at=? WHERE id=?", (created_at, tid))
+                        conn.commit()
+                        imported += 1
+                st.success(f"{imported} Themen importiert.")
+        except Exception as e:
+            st.error(f"Excel-Import fehlgeschlagen: {e}")
+
+# Export buttons
 if "selected_ids" not in st.session_state:
     st.session_state["selected_ids"] = set()
-
 col_dl1, col_dl2 = st.sidebar.columns(2)
 with col_dl1:
     if st.button("🧾 PDF export (Auswahl)"):
@@ -424,22 +395,20 @@ with col_dl2:
 st.title(f"🌿 {APP_TITLE}")
 st.markdown("""
 <div class="eco-accent">
-<b>Zweck:</b> Themen als Sprint-Projekte erfassen, updaten, kommentieren und selektiv/exportieren.
+<b>Zweck:</b> Themen als Sprint-Projekte erfassen, updaten, kommentieren, archivieren und selektiv/exportieren.
 </div>
 """, unsafe_allow_html=True)
 
-tab_new, tab_list = st.tabs(["➕ Neues Thema", "📚 Themenübersicht"])
+tab_new, tab_list, tab_arch = st.tabs(["➕ Neues Thema", "📚 Themenübersicht", "📦 Archiv"])
 
 with tab_new:
     st.subheader("Neues Thema anlegen")
-
     with st.form("new_topic"):
         title = st.text_input("Titel*", placeholder="Kurzer, prägnanter Titel", max_chars=180)
         desc = st.text_area("Beschreibung", height=160, placeholder="Kurzbeschreibung, Ziel, Deliverables, To-Dos ...")
         cat = st.selectbox("Rubrik", options=get_categories())
         st.caption("Rubriken können links in den Einstellungen verwaltet werden.")
         st.markdown("**Links zum Thema (optional)**")
-        # dynamic link inputs
         if "link_rows" not in st.session_state: st.session_state.link_rows = 1
         lr_cols = st.columns([3,6,2])
         with lr_cols[0]:
@@ -447,15 +416,10 @@ with tab_new:
         with lr_cols[1]:
             url0 = st.text_input("URL 1", key="url_0", placeholder="https://...")
         with lr_cols[2]:
-            st.write("")
             add_more = st.form_submit_button("＋ Mehr Links")
             if add_more:
                 st.session_state.link_rows = int(st.session_state.get("link_rows",1)) + 1
-                try:
-                    st.rerun()
-                except Exception:
-                    st.experimental_rerun()
-                st.session_state.link_rows += 1
+                st.experimental_rerun()
         links = []
         for i in range(1, st.session_state.link_rows):
             c = st.columns([3,6,1])
@@ -474,11 +438,9 @@ with tab_new:
             elif any(l.get("url") and not valid_url(l["url"]) for l in links):
                 st.error("Bitte gültige URLs mit http(s):// angeben.")
             else:
-                # filter empty links
                 clean_links = [l for l in links if l.get("url")]
                 tid = create_topic(title.strip(), desc.strip(), cat, current_user, clean_links)
                 st.success(f"Thema #{tid} angelegt von {current_user} am {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}")
-                # reset link rows
                 st.session_state.link_rows = 1
                 for k in list(st.session_state.keys()):
                     if k.startswith("lbl_") or k.startswith("url_"):
@@ -486,21 +448,13 @@ with tab_new:
 
 with tab_list:
     st.subheader("Themenübersicht & Follow-ups")
-
-    # Load data with filters
     df = list_topics(st.session_state.get("_filters", {}))
     if df.empty:
-        st.info("Keine Themen gefunden. Lege ein erstes Thema an.")
+        st.info("Keine Themen gefunden. Lege ein erstes Thema an oder hebe 'Nur archivierte anzeigen' auf.")
     else:
-        # Select all toggle
         sel_all = st.checkbox("Alle auswählen / Auswahl zurücksetzen")
         if sel_all:
             st.session_state["selected_ids"] = set(df["id"].tolist())
-        else:
-            # don't clear selection automatically to avoid surprise
-            pass
-
-        # Table-like rendering with expanders
         for _, row in df.iterrows():
             tid = int(row["id"])
             title = row["Titel"]
@@ -513,18 +467,14 @@ with tab_list:
                 links = json.loads(row["Links"]) if row["Links"] else []
             except:
                 links = []
-
             with st.expander(f"#{tid} • {title}"):
                 top_cols = st.columns([1,3,2,2,2])
                 with top_cols[0]:
                     checked = st.checkbox("Auswählen", key=f"sel_{tid}", value=(tid in st.session_state['selected_ids']))
-                    if checked:
-                        st.session_state["selected_ids"].add(tid)
-                    else:
-                        st.session_state["selected_ids"].discard(tid)
+                    if checked: st.session_state["selected_ids"].add(tid)
+                    else: st.session_state["selected_ids"].discard(tid)
                 with top_cols[1]:
                     st.markdown(f"**Rubrik:** {cat}")
-                    # change category
                     cats_all = get_categories()
                     new_cat = st.selectbox("Rubrik ändern", options=cats_all, index=cats_all.index(cat) if cat in cats_all else 0, key=f"cat_{tid}")
                     if st.button("💾 Speichern", key=f"save_cat_{tid}"):
@@ -551,14 +501,17 @@ with tab_list:
                     if st.button("🧾 Nur dieses Thema exportieren (PDF)", key=f"exp_one_{tid}"):
                         pdf = build_pdf([tid])
                         st.download_button("📥 Download PDF", data=pdf, file_name=f"thema_{tid}.pdf", key=f"dwn_{tid}")
+                    if st.button("📦 Archivieren", key=f"arch_{tid}"):
+                        archive_topic(tid, current_user)
+                        st.success("Thema archiviert.")
+                        st.experimental_rerun()
 
                 st.markdown("---")
                 st.markdown("**Beschreibung**")
                 st.write(desc or "—")
 
-                # Updates
                 st.markdown("**Updates**")
-                ups = get_updates(tid)
+                ups = conn.execute("SELECT user, content, created_at FROM updates WHERE topic_id=? ORDER BY datetime(created_at) DESC", (tid,)).fetchall()
                 if ups:
                     for u in ups:
                         st.markdown(f"- _{u[2]}_ – **{u[0]}**: {u[1]}")
@@ -571,9 +524,8 @@ with tab_list:
                         else:
                             st.error("Bitte Inhalt eingeben.")
 
-                # Comments
                 st.markdown("**Kommentare**")
-                cms = get_comments(tid)
+                cms = conn.execute("SELECT user, content, created_at FROM comments WHERE topic_id=? ORDER BY datetime(created_at) DESC", (tid,)).fetchall()
                 if cms:
                     for cmt in cms:
                         st.markdown(f"- _{cmt[2]}_ – **{cmt[0]}**: {cmt[1]}")
@@ -586,5 +538,37 @@ with tab_list:
                         else:
                             st.error("Bitte Inhalt eingeben.")
 
-# Footer note
+with tab_arch:
+    st.subheader("Archivierte Themen")
+    dfA = list_topics({**st.session_state.get("_filters", {}), "archived_only": True})
+    if dfA.empty:
+        st.info("Noch keine archivierten Themen.")
+    else:
+        for _, row in dfA.iterrows():
+            tid = int(row["id"])
+            title = row["Titel"]
+            cat = row["Kategorie"]
+            author = row["Autor"]
+            created_at = row["Erstellt am"]
+            archived_at = row["archived_at"]
+            desc = row["Beschreibung"]
+            links = []
+            try:
+                links = json.loads(row["Links"]) if row["Links"] else []
+            except:
+                links = []
+            with st.expander(f"#{tid} • {title}"):
+                st.caption(f"Rubrik: {cat} | Autor: {author} | Eröffnung: {created_at} | Archiviert: {archived_at}")
+                if links:
+                    st.markdown("**Links:**")
+                    for l in links:
+                        st.markdown(f"• [{l.get('label') or l.get('url')}]({l.get('url')})")
+                st.markdown("---")
+                st.markdown("**Beschreibung**")
+                st.write(desc or "—")
+                if st.button("♻️ Wiederherstellen", key=f"restore_{tid}"):
+                    restore_topic(tid)
+                    st.success("Thema wiederhergestellt.")
+                    st.experimental_rerun()
+
 st.caption("© Qrauts AG – Nachhaltige Energieprojekte strukturiert steuern.")
