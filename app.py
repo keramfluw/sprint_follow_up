@@ -20,7 +20,6 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import json
 import re
-import random
 import io
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -96,20 +95,15 @@ def inject_theme_and_animations():
         background: linear-gradient(0deg, #CFE8C5 0%, transparent 80%);
         z-index: 0; pointer-events: none;
       }
-      .eco-horses {
-        position: fixed; bottom: 0; left: 0; right: 0; height: 120px;
-        pointer-events: none; z-index: 9998; overflow: visible;
-      }
       .horse {
         position: fixed;
         bottom: 12px;
         font-size: 18px;
         opacity: 0.9;
-        z-index: 9999;
         filter: saturate(0.6);
         animation-name: gallop;
         animation-timing-function: linear;
-        animation-iteration-count: infinite;
+        animation-iteration-count: 1;
         pointer-events: none;
       }
       @keyframes gallop {
@@ -138,21 +132,32 @@ def inject_theme_and_animations():
       <div class="wind" style="left:74vw; transform: scale(1.05);"><div class="mast"></div><div class="nacelle"></div><div class="rotor" style="animation-duration:9s;"><div class="hub"></div><div class="blade"></div><div class="blade" style="transform: rotate(120deg)"></div><div class="blade" style="transform: rotate(240deg)"></div></div></div>
     </div>
     <div class="field" id="horse-field"></div>
-    
+    <script>
+      const emojis = ["🐎","🐴","🦄"];
+      function spawnHorse(){
+        const h = document.createElement("div");
+        h.className = "horse";
+        h.textContent = emojis[Math.floor(Math.random()*emojis.length)];
+        const y = 6 + Math.random()*50;
+        const dur = 10 + Math.random()*16;
+        const size = 14 + Math.random()*14;
+        h.style.bottom = y + "px";
+        h.style.left = "-10vw";
+        h.style.fontSize = size + "px";
+        h.style.animationDuration = dur + "s";
+        document.body.appendChild(h);
+        setTimeout(()=> h.remove(), (dur+1)*1000);
+      }
+      // spawn bursts
+      setInterval(()=>{
+        if (document.visibilityState === 'visible'){
+          const n = 1 + Math.floor(Math.random()*2);
+          for(let i=0;i<n;i++){ setTimeout(spawnHorse, i*800); }
+        }
+      }, 6000);
+    </script>
     '''
-    emojis = ["🐎","🐴","🦄"]
-horses_tags = []
-for i in range(8):
-    delay = random.uniform(0, 12)
-    dur = random.uniform(10, 22)
-    size = random.randint(14, 26)
-    bottom = random.randint(6, 56)
-    emoji = random.choice(emojis)
-    horses_tags.append(
-        f'<span class="horse" style="animation-delay:{delay:.2f}s; animation-duration:{dur:.2f}s; font-size:{size}px; bottom:{bottom}px">{emoji}</span>'
-    )
-horses_html = '<div class="eco-horses">' + ''.join(horses_tags) + '</div>'
-st.markdown(html + horses_html, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
 
 inject_theme_and_animations()
 
