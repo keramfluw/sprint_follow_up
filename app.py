@@ -517,7 +517,9 @@ with tab_arch:
             with st.expander(f"#{tid} • {title}"):
                 st.caption(f"Rubrik: {cat} | Autor: {author} | Eröffnung: {created_at} | Archiviert: {archived_at}")
                 if links:
-                    st.markdown("**Links:**"); for l in links: st.markdown(f"• [{l.get('label') or l.get('url')}]({l.get('url')})")
+                    st.markdown("**Links:**")
+                    for l in links:
+                        st.markdown(f"• [{l.get('label') or l.get('url')}]({l.get('url')})")
                 st.markdown("---"); st.markdown("**Beschreibung**"); st.write(desc or "—")
 
                 st.markdown("**Updates**")
