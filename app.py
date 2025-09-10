@@ -131,6 +131,14 @@ def init_db():
 conn = init_db()
 
 # ---------- Helpers ----------
+def fmt_dt(ts:str):
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(ts)
+        return dt.strftime('%d.%m.%Y %H:%M:%S')
+    except Exception:
+        return ts
+
 def now_iso():
     return datetime.now(TZ).isoformat(timespec="seconds")
 
@@ -514,7 +522,7 @@ with tab_list:
                 ups = conn.execute("SELECT user, content, created_at FROM updates WHERE topic_id=? ORDER BY datetime(created_at) DESC", (tid,)).fetchall()
                 if ups:
                     for u in ups:
-                        st.markdown(f"- _{u[2]}_ – **{u[0]}**: {u[1]}")
+                        st.markdown(f"- _{fmt_dt(u[2])}_ – **{u[0]}**: {u[1]}")
                 with st.form(f"form_up_{tid}", clear_on_submit=True):
                     up_txt = st.text_area("Update hinzufügen", key=f"up_txt_{tid}", height=80, placeholder="Was ist neu?")
                     if st.form_submit_button("✅ Update speichern"):
@@ -528,7 +536,7 @@ with tab_list:
                 cms = conn.execute("SELECT user, content, created_at FROM comments WHERE topic_id=? ORDER BY datetime(created_at) DESC", (tid,)).fetchall()
                 if cms:
                     for cmt in cms:
-                        st.markdown(f"- _{cmt[2]}_ – **{cmt[0]}**: {cmt[1]}")
+                        st.markdown(f"- _{fmt_dt(cmt[2])}_ – **{cmt[0]}**: {cmt[1]}")
                 with st.form(f"form_cm_{tid}", clear_on_submit=True):
                     cm_txt = st.text_area("Kommentar hinzufügen", key=f"cm_txt_{tid}", height=60, placeholder="Gedanke, Frage, Hinweis ...")
                     if st.form_submit_button("💬 Kommentar speichern"):
