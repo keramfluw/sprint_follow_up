@@ -448,7 +448,13 @@ with tab_new:
             url0 = st.text_input("URL 1", key="url_0", placeholder="https://...")
         with lr_cols[2]:
             st.write("")
-            if st.button("＋ Mehr Links", key="more_links"):
+            add_more = st.form_submit_button("＋ Mehr Links")
+            if add_more:
+                st.session_state.link_rows = int(st.session_state.get("link_rows",1)) + 1
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
                 st.session_state.link_rows += 1
         links = []
         for i in range(1, st.session_state.link_rows):
